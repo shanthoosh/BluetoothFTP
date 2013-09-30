@@ -1,5 +1,6 @@
 package edu.isi.android.bluetoothftpdemo;
 
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 import android.app.Activity;
@@ -26,8 +27,9 @@ public class BluetoothFileTransferActivity extends Activity {
 	private Button discoverBT;
 
 	private BluetoothAdapter mBluetoothAdapter = null;
-	private BluetoothAdapter mNewDevicesArrayAdapter = null;
 	private Set<BluetoothDevice> pairedDevices = null;
+
+	private ConnectionService connService = null;
 
 	// private ArrayAdapter<BluetoothDevice> pairedDevArrAdapter = new
 	// ArrayAdapter<BluetoothDevice>(this, textViewResourceId);
@@ -40,18 +42,18 @@ public class BluetoothFileTransferActivity extends Activity {
 		Log.d(TAG, "Starting main activity!!");
 
 		/*
-		 * create an Broadcast register and register the event that you are 
+		 * create an Broadcast register and register the event that you are
 		 * interested in
 		 */
 		// Register for broadcasts when a device is discovered
-        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
-        this.registerReceiver(mReceiver, filter);
+		IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+		this.registerReceiver(mReceiver, filter);
 
-        // Register for broadcasts when discovery has finished
-        filter = new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
-        this.registerReceiver(mReceiver, filter);
-        
-        /* To check if the device has the bluetooth hardware */
+		// Register for broadcasts when discovery has finished
+		filter = new IntentFilter(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
+		this.registerReceiver(mReceiver, filter);
+
+		/* To check if the device has the bluetooth hardware */
 
 		mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
 		if (mBluetoothAdapter == null) {
@@ -62,7 +64,6 @@ public class BluetoothFileTransferActivity extends Activity {
 			finish();
 			return;
 		}
-		
 
 		discoverBT = (Button) findViewById(R.id.discoverbutton);
 		discoverBT.setOnClickListener(new OnClickListener() {
@@ -88,12 +89,15 @@ public class BluetoothFileTransferActivity extends Activity {
 		pairedDevices = mBluetoothAdapter.getBondedDevices();
 		if (pairedDevices != null && pairedDevices.size() > 0) {
 			for (BluetoothDevice dev : pairedDevices) {
-				Log.i(TAG, "PEERED DEVICES::  Device name " + dev.getName() + " and address " + dev.getAddress());
+				Log.i(TAG, "PEERED DEVICES::  Device name " + dev.getName()
+						+ " and address " + dev.getAddress());
 			}
 		}
-		
-		//2. discover non-paired devices
+
+		// 2. discover non-paired devices
 		mBluetoothAdapter.startDiscovery();
+		
+		setupConnection();
 
 	}
 
@@ -108,20 +112,40 @@ public class BluetoothFileTransferActivity extends Activity {
 		 */
 
 		if (!mBluetoothAdapter.isEnabled()) {
-			/*Intent enableBtIntent = new Intent(
-					BluetoothAdapter.ACTION_REQUEST_ENABLE);
-			startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);*/
-			
-			//make your device discoverable
-			Intent makeDiscoverable = new Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
-			makeDiscoverable.putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
-			startActivity(makeDiscoverable);
-			
+			/*
+			 * Intent enableBtIntent = new Intent(
+			 * BluetoothAdapter.ACTION_REQUEST_ENABLE);
+			 * startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+			 */
+
+			// make your device discoverable
+			Intent makeDiscoverable = new Intent(
+					BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE);
+			makeDiscoverable.putExtra(
+					BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 300);
+			startActivityForResult(makeDiscoverable, REQUEST_ENABLE_BT);
+
 		} else {
 			Log.d(TAG,
 					"Bluetooth is already enabled. Setting up the file transfer");
 			// TODO setup the bluetooth file transfer app
 		}
+
+		if (connService == null) {
+			setupConnection();
+		}
+	}
+
+	@Override
+	protected void onDestroy() {
+		super.onDestroy();
+		// Make sure we're not doing discovery anymore
+		if (mBluetoothAdapter != null) {
+			mBluetoothAdapter.cancelDiscovery();
+		}
+
+		// Unregister broadcast listeners
+		this.unregisterReceiver(mReceiver);
 	}
 
 	@Override
@@ -133,38 +157,72 @@ public class BluetoothFileTransferActivity extends Activity {
 
 	@Override
 	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-		if (resultCode == RESULT_CANCELED) {
+		switch (resultCode) {
+		case REQUEST_ENABLE_BT:
+			Log.i(TAG, "Bluetooth is enabled and discoverable on this device.");
+			Log.i(TAG, "Setting up the connections");
+			setupConnection();
+			break;
+
+		case RESULT_CANCELED:
 			Log.d(TAG, "User cancels the bluetooth activation. Exiting!!");
 			finish();
+			break;
 		}
 	}
-	
-	// The BroadcastReceiver that listens for discovered devices and
-    // changes the title when discovery is finished
-    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
 
-            // When discovery finds a device
-            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                // Get the BluetoothDevice object from the Intent
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                // If it's already paired, skip it, because it's been listed already
-                if (device.getBondState() != BluetoothDevice.BOND_BONDED) {
-                    //TODO :mNewDevicesArrayAdapter.add(device.getName() + "\n" + device.getAddress());
-                	Log.i(TAG, "Device Discovery:: Device name " + device.getName() + " and address " + device.getAddress());
-                	
-                }
-            // When discovery is finished, change the Activity title
-            } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                setProgressBarIndeterminateVisibility(false);
-                /*setTitle(R.string.select_device);
-                if (mNewDevicesArrayAdapter.getCount() == 0) {
-                    String noDevices = getResources().getText(R.string.none_found).toString();
-                    mNewDevicesArrayAdapter.add(noDevices);
-                }*/
-            }
-        }
-    };
+	// The BroadcastReceiver that listens for discovered devices and
+	// changes the title when discovery is finished
+	private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+		@Override
+		public void onReceive(Context context, Intent intent) {
+			String action = intent.getAction();
+
+			// When discovery finds a device
+			if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+				// Get the BluetoothDevice object from the Intent
+				BluetoothDevice device = intent
+						.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+				// If it's already paired, skip it, because it's been listed
+				// already
+				if (device.getBondState() != BluetoothDevice.BOND_BONDED) {
+					// TODO :mNewDevicesArrayAdapter.add(device.getName() + "\n"
+					// + device.getAddress());
+					Log.i(TAG,
+							"Device Discovery:: Device name "
+									+ device.getName() + " and address "
+									+ device.getAddress());
+
+				}
+				// When discovery is finished, change the Activity title
+			} else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED
+					.equals(action)) {
+				setProgressBarIndeterminateVisibility(false);
+				/*
+				 * setTitle(R.string.select_device); if
+				 * (mNewDevicesArrayAdapter.getCount() == 0) { String noDevices
+				 * = getResources().getText(R.string.none_found).toString();
+				 * mNewDevicesArrayAdapter.add(noDevices); }
+				 */
+			}
+		}
+	};
+
+	/**
+	 * This method setup the connections for socket communication
+	 */
+	private void setupConnection() {
+		if (connService == null)
+			connService = new ConnectionService(this, mBluetoothAdapter);
+
+		// send data to the first device in the paired devices list
+		if (pairedDevices != null && !pairedDevices.isEmpty()) {
+			BluetoothDevice device = pairedDevices.iterator().next();
+
+			if (device != null) {
+				connService.connect(device);
+			}
+		}
+	}
+
 }
